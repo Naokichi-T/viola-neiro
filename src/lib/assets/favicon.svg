@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- ビオラ音色練習のアイコン：紫の丸に、白い音符と、ビブラートのような音の波（形はバイオリン版と同じで、色だけ紫） -->
+  <!-- 紫の丸（アプリのアクセントの色） -->
+  <circle cx="32" cy="32" r="32" fill="#7b4fb5"/>
+  <!-- 音符（八分音符）：玉・ぼう・旗 -->
+  <ellipse cx="25" cy="33" rx="6.5" ry="4.8" transform="rotate(-22 25 33)" fill="#ffffff"/>
+  <rect x="29.6" y="12" width="2.8" height="21" fill="#ffffff"/>
+  <path d="M32.4 12 C35 16 41 17 40 25 C39 21 36 19.5 32.4 19.5 Z" fill="#ffffff"/>
+  <!-- 音の波（ビブラートの揺れ） -->
+  <path d="M9 47 q5.5 -6 11 0 t11 0 t11 0 t11 0" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round"/>
+</svg>

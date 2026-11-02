@@ -1,0 +1,5 @@
+# 検索エンジンへの案内：すべてのページを見てよい・サイトマップの場所
+User-agent: *
+Allow: /
+
+Sitemap: https://viola-neiro.vercel.app/sitemap.xml

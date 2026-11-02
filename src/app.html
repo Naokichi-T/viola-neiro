@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- 日本語のページであることをブラウザや検索エンジンに伝えるため lang="ja" にする -->
+<html lang="ja">
+  <head>
+    <!-- 文字コード（日本語が文字化けしないように UTF-8 を指定） -->
+    <meta charset="utf-8" />
+    <!-- スマホで画面の幅に合わせて表示するための設定 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- スマホのブラウザの上の帯の色（アクセントの紫） -->
+    <meta name="theme-color" content="#7b4fb5" />
+    <!-- 各ページの <svelte:head> の中身（タイトルなど）がここに入る -->
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <!-- 各ページの中身がここに入る -->
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>
