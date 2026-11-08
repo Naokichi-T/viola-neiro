@@ -61,6 +61,17 @@ async function ensureAudioContext() {
 }
 
 /**
+ * 音を鳴らす準備（音の土台を作って動かす）だけをする関数
+ * 音階のページで使う。「始める」ボタンを押した瞬間の処理の中で呼んでおくと、
+ * マイクの許可を待ったあとに鳴らすお手本の音も、iPad・iPhone で鳴るようになる
+ * （ボタンを押した瞬間の処理の外で作った土台は、一時停止のまま音が出ないことがあるため）。
+ * @returns {Promise<void>}
+ */
+export async function prepareDrone() {
+  await ensureAudioContext();
+}
+
+/**
  * 音量のつまみの値（0〜100）を、実際の音量（0〜MAX_GAIN）に変換する関数
  * 人の耳は小さい音の変化に敏感なので、2乗して、つまみの下のほうを細かく調整できるようにする。
  * @param {number} volume - 音量のつまみの値（0〜100）

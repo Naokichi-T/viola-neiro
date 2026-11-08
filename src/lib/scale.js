@@ -13,6 +13,9 @@
 // 調号から、音名ごとの♯・♭を求める関数
 import { getSignatureAccidentals } from "./key.js";
 
+// 音律に合わせて、音の周波数を求める関数
+import { getFrequency } from "./tuning.js";
+
 // 音番号の計算と、音名の一覧
 import { getNoteNumber, STEP_NAMES } from "./score.js";
 
@@ -33,6 +36,9 @@ export const DEFAULT_MINOR_TYPE_ID = "harmonic";
 
 // 選べるオクターブの数
 export const OCTAVE_COUNTS = [1, 2];
+
+// 音階練習で使う音律（ロングトーンと同じピタゴラス音律で固定）
+const SCALE_TEMPERAMENT_ID = "pythagorean";
 
 // ビオラで弾ける一番低い音の音番号（ド3。C線の開放弦）
 const LOWEST_NOTE_NUMBER = 48;
@@ -198,4 +204,26 @@ function scaleAccidentalToText(accidental) {
 export function scaleNoteToText(note) {
   // 音名・変化記号・オクターブの順につなげる
   return STEP_NAMES[note.step] + scaleAccidentalToText(note.accidental) + note.octave;
+}
+
+/**
+ * 音階の音の周波数を求める関数（ピタゴラス音律・ラ＝442Hz）
+ * お手本の音の高さと、合っているかの判定の両方に使う。
+ * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
+ * @param {import("./key.js").Key} key - 調のデータ（ピタゴラス音律では使わないが、関数の形に合わせて渡す）
+ * @returns {number} 周波数（Hz）
+ */
+export function getScaleFrequency(note, key) {
+  return getFrequency(note, key, SCALE_TEMPERAMENT_ID);
+}
+
+/**
+ * 弾いた音が、目標から何セントずれているかを計算する関数
+ * セントは、半音を100に分けた音程の単位（1オクターブが1200セント）。
+ * @param {number} frequency - 弾いた音の周波数（Hz）
+ * @param {number} targetFrequency - 目標の周波数（Hz）
+ * @returns {number} ずれ（セント）。プラスは高い、マイナスは低い
+ */
+export function getScaleCents(frequency, targetFrequency) {
+  return 1200 * Math.log2(frequency / targetFrequency);
 }

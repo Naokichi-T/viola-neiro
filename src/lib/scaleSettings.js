@@ -1,5 +1,5 @@
 // ===== 音階練習の設定をブラウザに保存・読み込みする仕組み =====
-// 選んだ調・短音階の種類・オクターブの数を覚えておき、次に開いたときも同じ設定で始められるようにする。
+// 選んだ調・短音階の種類・オクターブの数・お手本の音の音量を覚えておき、次に開いたときも同じ設定で始められるようにする。
 // （ドローンの droneSettings.js と同じ形）
 
 // 調の id が正しいかを確かめる関数を読み込む
@@ -15,16 +15,18 @@ const STORAGE_KEY = "viola-neiro-scale-settings";
 //   keyId       ：調の id
 //   minorTypeId ：短音階の種類の id（'natural'・'harmonic'・'melodic'。長調のときは使わないが、覚えておく）
 //   octaveCount ：オクターブの数（1 か 2）
+//   volume      ：お手本の音の音量のつまみの値（0〜100）
 export const DEFAULT_SCALE_SETTINGS = {
   keyId: DEFAULT_KEY_ID,
   minorTypeId: DEFAULT_MINOR_TYPE_ID,
   octaveCount: 1,
+  volume: 60,
 };
 
 /**
  * 保存しておいた設定を読み込む関数
  * 保存がないとき・読めないとき・おかしな値のときは、最初の値を使う。
- * @returns {{keyId: string, minorTypeId: string, octaveCount: number}} 設定
+ * @returns {{keyId: string, minorTypeId: string, octaveCount: number, volume: number}} 設定
  */
 export function loadScaleSettings() {
   try {
@@ -45,6 +47,8 @@ export function loadScaleSettings() {
       minorTypeId: getMinorType(saved.minorTypeId).id,
       // 2 のときだけ2オクターブ、それ以外は1オクターブ
       octaveCount: saved.octaveCount === 2 ? 2 : 1,
+      // 数でないとき（前の版の保存で、音量がないときも）は最初の値、数なら 0〜100 の範囲に収める
+      volume: typeof saved.volume === "number" ? Math.min(Math.max(Math.round(saved.volume), 0), 100) : DEFAULT_SCALE_SETTINGS.volume,
     };
   } catch (error) {
     // 保存が壊れていた・ブラウザが保存を禁止しているなど
@@ -54,7 +58,7 @@ export function loadScaleSettings() {
 
 /**
  * 設定をブラウザに保存する関数
- * @param {{keyId: string, minorTypeId: string, octaveCount: number}} settings - 設定
+ * @param {{keyId: string, minorTypeId: string, octaveCount: number, volume: number}} settings - 設定
  */
 export function saveScaleSettings(settings) {
   try {
