@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- 検索エンジンに知らせるページの一覧（ホーム・3つの練習・ドローンの使い方） -->
+<!-- 検索エンジンに知らせるページの一覧（ホーム・4つの練習・ドローンの使い方） -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://viola-neiro.vercel.app/</loc></url>
   <url><loc>https://viola-neiro.vercel.app/drone</loc></url>
   <url><loc>https://viola-neiro.vercel.app/drone/guide</loc></url>
   <url><loc>https://viola-neiro.vercel.app/longtone</loc></url>
   <url><loc>https://viola-neiro.vercel.app/record</loc></url>
+  <url><loc>https://viola-neiro.vercel.app/scale</loc></url>
 </urlset>
