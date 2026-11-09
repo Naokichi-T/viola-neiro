@@ -28,7 +28,7 @@ export const MAX_UNSTARRED = 5;
 //   keyId         ：録音したときの調の id
 //   temperamentId ：録音したときの音律の id
 //   starred       ：★が付いているか
-//   memo          ：メモ（曲名など）
+//   memo          ：メモ（曲名など）。読み込んだ音源のときは、最初からファイル名が入る
 //   tempo         ：メトロノームのテンポ（♩＝）。メトロノームを使わなかったときは null
 //   beatMarks     ：メトロノームのクリックが鳴った位置（time はグラフの左端からの秒、downbeat は小節の頭か）。グラフの拍の線に使う
 //   samples     ：音程のデータ（time はグラフの左端からの秒、frequency は周波数）
@@ -127,7 +127,7 @@ async function pruneRecordings() {
 
 /**
  * 録音を保存する関数（保存したあと、古い録音を消す）
- * @param {{createdAt: number, duration: number, keyId: string, temperamentId: string, tempo: number|null, beatMarks: {time: number, downbeat: boolean}[], samples: {time: number, frequency: number}[]}} data - 保存する録音（tempo はメトロノームのテンポ。使わなかったときは null、beatMarks は空）
+ * @param {{createdAt: number, duration: number, keyId: string, temperamentId: string, tempo: number|null, beatMarks: {time: number, downbeat: boolean}[], samples: {time: number, frequency: number}[], memo?: string}} data - 保存する録音（tempo はメトロノームのテンポ。使わなかったときは null、beatMarks は空。memo は最初に入れておくメモで、なければ空）
  * @returns {Promise<number>} 保存した録音の id
  */
 export async function saveRecording(data) {
@@ -144,7 +144,8 @@ export async function saveRecording(data) {
     keyId: data.keyId,
     temperamentId: data.temperamentId,
     starred: false,
-    memo: "",
+    // 最初に入れておくメモ（読み込んだ音源のファイル名など）。渡されなければ空にする
+    memo: data.memo ?? "",
     tempo: data.tempo,
     // クリックの位置も、時刻を1ミリ秒まで丸めて保存する
     beatMarks: data.beatMarks.map((mark) => ({

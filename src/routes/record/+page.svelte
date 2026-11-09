@@ -3,6 +3,7 @@
   // 弾いた音を録音しながら音程も測り、止めたら「一番近い音からのずれ」のグラフを出す。
   // 再生すると、グラフの上を縦線が動く。グラフを押すと、その場所から再生する。
   // 止めた録音の音程のデータはブラウザに保存し（★なしは5つまで）、前の録音のグラフと並べて見比べられる。
+  // ほかで録音した音源（ボイスメモ・動画など）のファイルを読み込んで、同じグラフにすることもできる（audioFile.js）。
 
   // ページのタイトル・説明文・OGP をまとめて出す部品
   import PageMeta from "#lib/PageMeta.svelte";
@@ -17,6 +18,9 @@
 
   // 録音
   import { startRecorder, stopRecorder, cancelRecorder } from "#lib/recorder.js";
+
+  // ほかで録音した音源（ファイル）の音程を調べる関数
+  import { analyzeAudioFile } from "#lib/audioFile.js";
 
   // 一番近い音を探す関数と、グラフの計算
   import { findNearestNoteInKey } from "#lib/nearestNote.js";
@@ -89,7 +93,8 @@
   //   'waiting'   ：「録音」を押して、弾き始めるのを待っている（裏ではもう録音している）
   //   'recording' ：弾き始めたあと（録音と計測をしている）
   //   'stopping'  ：止めて、録音のデータができるのを待っている
-  //   'done'      ：録音が終わって、グラフと再生のボタンを出している
+  //   'analyzing' ：読み込んだ音源の音程を調べている
+  //   'done'      ：録音が終わって（または音源を調べ終わって）、グラフと再生のボタンを出している
   let status = $state("idle");
 
   // 弾き始めてからの秒数（録音中に表示する）
@@ -111,6 +116,16 @@
   // 録音した音のデータの URL と、ダウンロードするときのファイル名
   let audioUrl = $state("");
   let fileName = $state("");
+
+  // 読み込んだ音源のファイル名（アプリで録音したときは空）
+  // 空でないときは「読み込んだ音源」として表示し、ダウンロードのボタンは出さない（もともと手元にあるファイルなので）
+  let importedName = $state("");
+
+  // 読み込んだ音源を調べている進み具合（0〜1）
+  let analyzeProgress = $state(0);
+
+  // 読み込んだ音源が長すぎて、最初の5分だけを調べたかどうか
+  let importTruncated = $state(false);
 
   // 再生しているかどうか
   let playing = $state(false);
@@ -161,6 +176,12 @@
 
   // 光らせた丸を消す予約の番号
   let lightTimer = null;
+
+  // ページを離れたかどうか（読み込んだ音源を調べている途中でやめるために使う）
+  let leftPage = false;
+
+  // ファイルを選ぶ入力欄（見えないようにしておき、ボタンを押したときに開く）
+  let fileInput = $state(null);
 
   // 丸を光らせておく時間（ミリ秒）
   const LIGHT_MILLISECONDS = 120;
@@ -234,6 +255,8 @@
 
     // ページを離れるときは、録音・マイク・メトロノーム・再生を全部止めて片付ける
     return () => {
+      // 音源を調べている途中なら、やめる
+      leftPage = true;
       stopMetronome();
       cancelRecorder();
       stopMicrophone();
@@ -424,6 +447,8 @@
     elapsed = 0;
     currentFrequency = null;
     currentId = null;
+    importedName = "";
+    importTruncated = false;
     rawSamples = [];
     recordStartTime = null;
     soundStartTime = null;
@@ -587,6 +612,128 @@
       finish();
     } else {
       start();
+    }
+  }
+
+  // ===== ほかで録音した音源の読み込み =====
+
+  /**
+   * 「音源を読み込む」ボタンを押したときの関数
+   * 見えないようにしてある、ファイルを選ぶ入力欄を開く。
+   */
+  function openFilePicker() {
+    if (fileInput !== null) {
+      fileInput.click();
+    }
+  }
+
+  /**
+   * ファイルが選ばれたときの関数
+   * 音源の音程を調べて、アプリで録音したときと同じグラフ・再生の画面にする。
+   * @param {Event} event - 入力欄の change のできごと
+   */
+  async function handleFileChange(event) {
+    const input = /** @type {HTMLInputElement} */ (event.currentTarget);
+    const file = input.files && input.files[0];
+
+    // 同じファイルをもう一度選んでも change が起きるように、入力欄を空に戻しておく
+    input.value = "";
+
+    // ファイルが選ばれなかった・録音中などのときは何もしない
+    if (!file || running || status === "stopping" || status === "analyzing") {
+      return;
+    }
+
+    // 「試しに鳴らす」のクリックは止める
+    previewing = false;
+
+    // 前の録音と結果を手放す
+    releaseAudio();
+    errorMessage = "";
+    samples = [];
+    duration = 0;
+    beatMarks = [];
+    currentId = null;
+    importTruncated = false;
+    analyzeProgress = 0;
+    importedName = file.name;
+    status = "analyzing";
+
+    // 音源の音程を調べる（最初に音が出てから、録音と同じ5分まで）
+    let result;
+    try {
+      result = await analyzeAudioFile(
+        file,
+        MAX_SECONDS,
+        (progress) => {
+          analyzeProgress = progress;
+        },
+        () => leftPage,
+      );
+    } catch (error) {
+      status = "idle";
+      importedName = "";
+      errorMessage = error instanceof Error ? error.message : "この音源は読み込めませんでした。";
+      return;
+    }
+
+    // 途中でページを離れたときは、ここで終わる
+    if (result === null) {
+      return;
+    }
+
+    // 音が1つも見つからなかったとき
+    if (result.samples.length === 0) {
+      status = "idle";
+      importedName = "";
+      errorMessage = "この音源からは、楽器の音が見つかりませんでした。";
+      return;
+    }
+
+    // グラフの左端：最初に音が出た少し前（ただし、ファイルの頭より前にはしない）。アプリで録音するときと同じ
+    const firstSoundTime = result.samples[0].time;
+    const graphStart = Math.max(0, firstSoundTime - LEAD_SECONDS);
+
+    // グラフの右端：ファイルの最後。ただし長すぎるときは、最初の音から5分のところまで
+    const graphEnd = Math.min(result.fileDuration, firstSoundTime + MAX_SECONDS);
+
+    audioOffset = graphStart;
+    duration = graphEnd - graphStart;
+    importTruncated = result.truncated;
+
+    // 調べた音の時刻を、グラフの左端からの秒に直す
+    samples = result.samples.map((sample) => ({
+      time: sample.time - graphStart,
+      frequency: sample.frequency,
+    }));
+
+    // 読み込んだ音源には、メトロノームのクリックの記録がないので、拍の線はなし
+    beatMarks = [];
+
+    // 再生の準備（選んだファイルを、そのまま再生に使う。動画のファイルでも、音だけが再生される）
+    audioUrl = URL.createObjectURL(file);
+    fileName = file.name;
+    prepareAudio();
+    playbackTime = 0;
+
+    status = "done";
+
+    // 音程のデータをブラウザに保存し、一覧を読み込み直す（保存できなくても、今の音源は見られる）
+    // メモの欄には、最初からファイル名を入れておく（あとで書き換えられる）
+    try {
+      currentId = await saveRecording({
+        createdAt: Date.now(),
+        duration,
+        keyId,
+        temperamentId,
+        tempo: null,
+        beatMarks,
+        samples,
+        memo: file.name,
+      });
+      await refreshHistory();
+    } catch (error) {
+      errorMessage = "この音源を一覧に保存できませんでした（グラフと再生はできます）。";
     }
   }
 
@@ -788,14 +935,14 @@
 <!-- ページのタイトル・説明文・OGP（リンクを送ったときに出る画像など） -->
 <PageMeta
   title="録音して聴き返す｜ビオラ音色練習"
-  description="ビオラの演奏を録音して聴き返し、音程のずれをグラフで振り返る練習ページ。メトロノーム・前の録音との見比べつき。"
+  description="ビオラの演奏を録音して聴き返し、音程のずれをグラフで振り返る練習ページ。ほかで録音した音源の読み込み・メトロノーム・前の録音との見比べつき。"
   path="/record"
 />
 
 <!-- ===== ホームへ戻るリンクと見出し ===== -->
 <a class="back" href="/">← ホーム</a>
 <h1 class="title">録音して聴き返す</h1>
-<p class="lead">「録音」を押してから弾き始めると、音が出たところから録音します。止めると音程のグラフが出ます。</p>
+<p class="lead">「録音」を押してから弾き始めると、音が出たところから録音します。止めると音程のグラフが出ます。ほかで録音した音源（ボイスメモや動画など）を読み込んで、グラフにすることもできます。</p>
 
 <!-- ===== 音律を選ぶ ===== -->
 <section class="row">
@@ -912,6 +1059,20 @@
     </div>
   {:else if status === "stopping"}
     <p class="now-message">録音をまとめています…</p>
+  {:else if status === "analyzing"}
+    <!-- 読み込んだ音源を調べている途中：進み具合を出す -->
+    <p class="now-message">音源を調べています… {Math.round(analyzeProgress * 100)}%</p>
+    <div class="progress" aria-hidden="true">
+      <div class="progress-bar" style="width: {analyzeProgress * 100}%"></div>
+    </div>
+  {:else if importedName}
+    <!-- 読み込んだ音源のグラフを出しているとき -->
+    <p class="now-message">
+      読み込んだ音源「{importedName}」 {formatTime(duration)}（グラフを押すと、そこから再生します）
+      {#if importTruncated}
+        <br />長いので、最初に音が出てから5分までを調べました。
+      {/if}
+    </p>
   {:else}
     <p class="now-message">録音 {formatTime(duration)}（グラフを押すと、そこから再生します）</p>
   {/if}
@@ -927,7 +1088,7 @@
 
 <!-- ===== 今の録音のグラフと再生（録音が終わったら出す） ===== -->
 {#if showCurrent}
-  <p class="graph-title">今の録音</p>
+  <p class="graph-title">{importedName ? "読み込んだ音源" : "今の録音"}</p>
   <RecordGraph
     {points}
     {labels}
@@ -946,7 +1107,10 @@
     <button type="button" class="sub-button" onclick={togglePlayback}>
       {playing ? "❚❚ 一時停止" : "▶ 再生"}
     </button>
-    <a class="sub-button" href={audioUrl} download={fileName}>ダウンロード</a>
+    <!-- ダウンロードは、アプリで録音したときだけ（読み込んだ音源は、もともと手元にあるファイルなので出さない） -->
+    {#if !importedName}
+      <a class="sub-button" href={audioUrl} download={fileName}>ダウンロード</a>
+    {/if}
   </div>
 {/if}
 
@@ -977,9 +1141,16 @@
 {/if}
 
 <!-- ===== 録音・止めるボタン ===== -->
-<button type="button" class="play" class:running disabled={status === "stopping"} onclick={handleToggle}>
+<button type="button" class="play" class:running disabled={status === "stopping" || status === "analyzing"} onclick={handleToggle}>
   {running ? "■ 止める" : status === "done" ? "● もう一度録音" : "● 録音"}
 </button>
+
+<!-- ===== ほかで録音した音源を読み込むボタン ===== -->
+<!-- ファイルを選ぶ入力欄そのものは見た目を変えにくいので隠しておき、このボタンを押したときに開く -->
+<!-- accept：音声と動画のファイルだけを選べるようにする（動画は、音だけを取り出して調べる） -->
+<input bind:this={fileInput} class="file-input" type="file" accept="audio/*,video/*" onchange={handleFileChange} />
+<button type="button" class="file-button" disabled={running || status === "stopping" || status === "analyzing"} onclick={openFilePicker}> ほかで録音した音源を読み込む </button>
+<p class="file-note">m4a・mp3・wav などの音声と、スマホで撮った動画が使えます。最初に音が出てから5分までを調べます。音源はこの端末の中だけで調べ、どこにも送りません。</p>
 
 <!-- ===== 前の録音の一覧 ===== -->
 {#if history.length > 0}
@@ -1381,6 +1552,50 @@
   .play:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+
+  /* ----- ほかで録音した音源を読み込む ----- */
+  /* ファイルを選ぶ入力欄は、見えないようにする（ボタンから開く） */
+  .file-input {
+    display: none;
+  }
+
+  .file-button {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    padding: 12px;
+    font-size: 1rem;
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    background: var(--card-bg);
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .file-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .file-note {
+    margin: 6px 0 0;
+    font-size: 0.8rem;
+    color: var(--text-sub);
+  }
+
+  /* 音源を調べている進み具合の棒 */
+  .progress {
+    height: 6px;
+    margin-top: 8px;
+    background: var(--card-bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
   }
 
   /* ----- 前の録音の一覧 ----- */
