@@ -22,6 +22,9 @@
   // ほかで録音した音源（ファイル）の音程を調べる関数
   import { analyzeAudioFile } from "#lib/audioFile.js";
 
+  // 録音を WAV ファイルにする関数（ダウンロードしたファイルを、Audipo などほかのアプリでも聴けるようにするため）
+  import { needsWavConversion, convertToWav } from "#lib/wav.js";
+
   // 一番近い音を探す関数と、グラフの計算
   import { findNearestNoteInKey } from "#lib/nearestNote.js";
   import { analyzeSamples, makeNoteLabels, makeBeatLines, PX_PER_SECOND, GRAPH_RIGHT_PADDING } from "#lib/recordGraph.js";
@@ -116,6 +119,13 @@
   // 録音した音のデータの URL と、ダウンロードするときのファイル名
   let audioUrl = $state("");
   let fileName = $state("");
+
+  // ダウンロードのために WAV に変換しているかどうか（ボタンを「変換中…」にするのに使う）
+  let converting = $state(false);
+
+  // 録音した音のデータそのもの（ダウンロードのときに WAV に変換するために持っておく）
+  // 読み込んだ音源のとき・片付けたあとは null
+  let recordedBlob = null;
 
   // 読み込んだ音源のファイル名（アプリで録音したときは空）
   // 空でないときは「読み込んだ音源」として表示し、ダウンロードのボタンは出さない（もともと手元にあるファイルなので）
@@ -581,6 +591,7 @@
     const now = new Date();
     audioUrl = URL.createObjectURL(recorded.blob);
     fileName = makeFileName(now, recorded.extension);
+    recordedBlob = recorded.blob;
     prepareAudio();
     playbackTime = 0;
 
@@ -781,7 +792,61 @@
       URL.revokeObjectURL(audioUrl);
       audioUrl = "";
     }
+    recordedBlob = null;
     playing = false;
+  }
+
+  /**
+   * 「ダウンロード」を押したときの関数
+   * 録音の中の音が AAC（iPhone・iPad）なら、そのままダウンロードする。
+   * Opus など（Android）なら、ほかのアプリでも聴けるように WAV に変換してからダウンロードする。
+   */
+  async function download() {
+    // 録音のデータがないとき・変換している途中のときは、何もしない
+    if (recordedBlob === null || converting) {
+      return;
+    }
+
+    // ボタンを押したあとに別の録音に変わっても大丈夫なように、今のデータとファイル名を覚えておく
+    const blob = recordedBlob;
+    const name = fileName;
+
+    // ----- そのままでよいとき -----
+    if (!(await needsWavConversion(blob))) {
+      saveFile(audioUrl, name);
+      return;
+    }
+
+    // ----- WAV に変換するとき -----
+    converting = true;
+    errorMessage = "";
+    try {
+      const wavBlob = await convertToWav(blob);
+      const wavUrl = URL.createObjectURL(wavBlob);
+      // 拡張子を .wav に付け替える（例：viola-neiro-20261110-1413.m4a → viola-neiro-20261110-1413.wav）
+      saveFile(wavUrl, name.replace(/\.[^.]+$/, "") + ".wav");
+      // ダウンロードが始まるまで少し待ってから、URL を片付ける（すぐ片付けると、ダウンロードできないことがあるため）
+      setTimeout(() => URL.revokeObjectURL(wavUrl), 10000);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "録音を WAV に変換できませんでした。";
+    } finally {
+      converting = false;
+    }
+  }
+
+  /**
+   * データの URL を、ファイルとしてダウンロードさせる関数
+   * 見えないリンクを作って押したことにする（ダウンロードのリンクを押したときと同じ動きになる）
+   * @param {string} url - データの URL
+   * @param {string} name - 保存するときのファイル名
+   */
+  function saveFile(url, name) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   /**
@@ -1109,7 +1174,10 @@
     </button>
     <!-- ダウンロードは、アプリで録音したときだけ（読み込んだ音源は、もともと手元にあるファイルなので出さない） -->
     {#if !importedName}
-      <a class="sub-button" href={audioUrl} download={fileName}>ダウンロード</a>
+      <!-- Android の録音は、ほかのアプリでも聴けるように WAV に変換してからダウンロードする（変換中はボタンを押せない） -->
+      <button type="button" class="sub-button" onclick={download} disabled={converting}>
+        {converting ? "変換中…" : "ダウンロード"}
+      </button>
     {/if}
   </div>
 {/if}
