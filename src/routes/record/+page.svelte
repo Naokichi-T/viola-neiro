@@ -14,7 +14,7 @@
   import { KEYS, getKey, getKeyMenuLabel, getScaleNames } from "#lib/key.js";
 
   // マイクのオン・オフと、録音に使う音の流れ
-  import { startMicrophone, stopMicrophone, createRecordingStream } from "#lib/microphone.js";
+  import { startMicrophone, stopMicrophone, createRecordingStream, getInputPeak } from "#lib/microphone.js";
 
   // 録音
   import { startRecorder, stopRecorder, cancelRecorder } from "#lib/recorder.js";
@@ -102,6 +102,14 @@
 
   // 弾き始めてからの秒数（録音中に表示する）
   let elapsed = $state(0);
+
+  // 【診断用・一時的（2026/11/10）】録音の音が割れる原因を確かめるための値。確かめ終わったら消す
+  //   peakMax       ：録音している間に、マイクから届いた音の一番大きい値（null はまだ測っていない）
+  //   peakOverCount ：一番大きい値が 0.999 以上だった回数（1秒に約60回調べるうちの回数）
+  //   peakCount     ：調べた回数
+  let peakMax = $state(null);
+  let peakOverCount = $state(0);
+  let peakCount = $state(0);
 
   // 今聞こえている音の周波数（聞こえていないときは null）
   let currentFrequency = $state(null);
@@ -455,6 +463,10 @@
     duration = 0;
     beatMarks = [];
     elapsed = 0;
+    // 【診断用・一時的】測り直す
+    peakMax = null;
+    peakOverCount = 0;
+    peakCount = 0;
     currentFrequency = null;
     currentId = null;
     importedName = "";
@@ -525,6 +537,14 @@
     // 弾き始めてからの秒数
     elapsed = now - soundStartTime;
     currentFrequency = frequency;
+
+    // 【診断用・一時的】マイクから届いた音の一番大きい値を記録する
+    const peak = getInputPeak();
+    peakMax = peakMax === null ? peak : Math.max(peakMax, peak);
+    peakCount += 1;
+    if (peak >= 0.999) {
+      peakOverCount += 1;
+    }
 
     // 音が聞こえたときだけ、ためておく
     if (frequency !== null) {
@@ -1106,6 +1126,13 @@
   {/if}
 </section>
 
+<!-- 【診断用・一時的（2026/11/10）】録音の音が割れる原因を確かめるための表示。確かめ終わったら消す -->
+{#if peakMax !== null}
+  <p class="peak-check">
+    【診断】一番大きい値 {peakMax.toFixed(3)} ／ 0.999 以上だった回数 {peakOverCount} 回（{peakCount} 回中）
+  </p>
+{/if}
+
 <!-- ===== 今の様子 ===== -->
 <div class="now">
   {#if status === "idle"}
@@ -1504,6 +1531,14 @@
     justify-content: space-between;
     align-items: baseline;
     gap: 12px;
+  }
+
+  /* 【診断用・一時的】録音の音が割れる原因を確かめるための表示 */
+  .peak-check {
+    margin: 8px 0;
+    font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
+    color: #c0392b;
   }
 
   .now-time {

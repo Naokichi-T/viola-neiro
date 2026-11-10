@@ -68,6 +68,10 @@ let frameId = null;
 // マイクを始めた回数。許可を待っている途中で止められたことに気づくために使う
 let requestCount = 0;
 
+// 【診断用・一時的（2026/11/10）】最後に取り出した波形の中で、一番大きい値（-1〜1 をはみ出すと 1 より大きくなる）
+// 録音の音が割れる原因が「マイクの部品」か「アプリの中」かを確かめるために使う。確かめ終わったら消す
+let lastPeak = 0;
+
 /**
  * iPad・iPhone かを調べる関数
  * iPad の Safari は、パソコンの Mac と同じ名前（Macintosh）を名のるので、指で触れる点の数（maxTouchPoints）でも見分ける
@@ -184,6 +188,17 @@ export async function startMicrophone(onPitch) {
     }
 
     analyser.getFloatTimeDomainData(buffer);
+
+    // 【診断用・一時的】波形の中で一番大きい値（プラス・マイナスどちらも、大きさで比べる）を覚えておく
+    let peak = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      const size = Math.abs(buffer[i]);
+      if (size > peak) {
+        peak = size;
+      }
+    }
+    lastPeak = peak;
+
     const frequency = detectPitch(buffer, audioContext.sampleRate);
 
     // 時刻は、ミリ秒を秒に直して渡す
@@ -194,6 +209,16 @@ export async function startMicrophone(onPitch) {
   };
 
   loop();
+}
+
+/**
+ * 【診断用・一時的（2026/11/10）】最後に取り出した波形の中で、一番大きい値を返す関数
+ * 1 を超えていれば、ブラウザまでは削れずに届いている（アプリの中で下げれば直る）。
+ * 1.000 ちょうどで止まっていれば、マイクの部品で削れている。確かめ終わったら消す
+ * @returns {number} 一番大きい値（0 以上）
+ */
+export function getInputPeak() {
+  return lastPeak;
 }
 
 /**
