@@ -27,6 +27,12 @@ const MIN_CLARITY = 0.8;
 //   （実際の録音で、弓で弾いている間の142回すべてがド3 になった）。
 //   ただし大きくしすぎると、今度は1オクターブ下と測りやすくなる
 //   （計算で試したところ 0.99 では、ミ4・ラ4 などでまれに1オクターブ下になった。0.985 では外れなし）
+// 【2026/11/10 あわせて、山の高さを「放物線で補った頂上の高さ」で比べるように変更（手順4）】
+//   ビオラ音程チェック（viola-pitch）を同じように直したときに計算で試したところ、0.985 にするだけだと、
+//   シ5〜シ6 あたりの高い音で、ときどき1オクターブ下と測り間違えることが分かった。
+//   高い音は周期が20〜30個ぶんと短く、整数の位置で測った山の高さが、本当の頂上より少し低く出ることがあり、
+//   本当の周期の山が 98.5％ に届かず、2倍の位置の山が選ばれてしまうため。
+//   補った頂上の高さで比べると、ド3〜ド7 のすべての音で外れがなくなった（波形2048個・4096個のどちらでも）
 const PEAK_RATIO = 0.985;
 
 /**
@@ -46,6 +52,33 @@ export function calculateRms(data) {
 
   // 合計を個数で割って平均を出し、その平方根を返す
   return Math.sqrt(sumOfSquares / data.length);
+}
+
+/**
+ * 山の本当の頂上の高さを求める関数（2026/11/10 追加）
+ * 重なり具合は、ずらし幅が整数（1個、2個…）のところでしか分からないが、本当の頂上はその間にあることが多い。
+ * 山の一番高い点とその両隣の3点を通る放物線を考えて、その放物線の一番高いところの値を返す。
+ * （detectPitch の手順7で「頂上の位置」を求めているのと同じ放物線を使って、「頂上の高さ」を求めている）
+ * @param {Float32Array} similarity - ずらし幅ごとの重なり具合（-1 〜 1）
+ * @param {number} peakLag - 山の一番高い点のずらし幅（両隣があること。0 や配列の最後ではないこと）
+ * @returns {number} 補った頂上の高さ。うまく補えないときは、一番高い点の値をそのまま返す
+ */
+function estimatePeakHeight(similarity, peakLag) {
+  // 頂上とその両隣の値
+  const left = similarity[peakLag - 1];
+  const center = similarity[peakLag];
+  const right = similarity[peakLag + 1];
+
+  // 放物線の曲がり具合。山の形（上に出っぱった形）なら、マイナスになる
+  const curve = left - 2 * center + right;
+
+  // 山の形になっていない（平ら・へこんでいる）ときは、補わずにそのまま返す
+  if (curve >= 0) {
+    return center;
+  }
+
+  // 放物線の一番高いところの値（3点を通る放物線の頂点の高さの公式）
+  return center - ((left - right) * (left - right)) / (8 * curve);
 }
 
 /**
@@ -97,6 +130,10 @@ export function detectPitch(data, sampleRate) {
   // 見つかった山の位置（ずらし幅）を入れておく配列
   const peakLags = [];
 
+  // 見つかった山の「補った頂上の高さ」を入れておく配列（peakLags と同じ順番で並ぶ）
+  // （2026/11/10 追加：高い音で1オクターブ下と測り間違えないように、整数の位置の高さではなく、こちらで比べる）
+  const peakHeights = [];
+
   // 見つかった山の中で一番高い値
   let highestPeak = 0;
 
@@ -120,9 +157,15 @@ export function detectPitch(data, sampleRate) {
     // 山が見つかり、それが調べた範囲の端ではないときだけ採用する
     // （端にあるものは、本当の頂上かどうか分からないため）
     if (peakLag !== -1 && peakLag < maxLag) {
+      // 山の本当の頂上の高さを求める（2026/11/10 追加）
+      const height = estimatePeakHeight(similarity, peakLag);
+
       peakLags.push(peakLag);
-      if (peakValue > highestPeak) {
-        highestPeak = peakValue;
+      peakHeights.push(height);
+
+      // 一番高い山も、補った頂上の高さで決める
+      if (height > highestPeak) {
+        highestPeak = height;
       }
     }
   }
@@ -135,9 +178,10 @@ export function detectPitch(data, sampleRate) {
   // ----- 手順6：十分に高い山のうち、最初のものを周期として採用する -----
   // 一番高い山ではなく「最初の十分に高い山」を選ぶことで、
   // 周期の2倍・3倍の位置にある山（1オクターブ低い音）と間違えるのを防ぐ
+  // （2026/11/10 変更：山の高さは、整数の位置の値ではなく、補った頂上の高さ（peakHeights）で比べる）
   let bestLag = peakLags[0];
   for (let i = 0; i < peakLags.length; i++) {
-    if (similarity[peakLags[i]] >= highestPeak * PEAK_RATIO) {
+    if (peakHeights[i] >= highestPeak * PEAK_RATIO) {
       bestLag = peakLags[i];
       break;
     }
