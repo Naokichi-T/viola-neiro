@@ -22,8 +22,9 @@
   // ほかで録音した音源（ファイル）の音程を調べる関数
   import { analyzeAudioFile } from "#lib/audioFile.js";
 
-  // 録音を WAV ファイルにする関数（ダウンロードしたファイルを、Audipo などほかのアプリでも聴けるようにするため）
-  import { needsWavConversion, convertToWav } from "#lib/wav.js";
+  // 録音を WAV ファイルにする関数（ダウンロードしたファイルを、Audipo などほかのアプリでも聴けるようにし、
+  // 弾き始めの少し前から書き出すため）
+  import { convertToWav } from "#lib/wav.js";
 
   // 一番近い音を探す関数と、グラフの計算
   import { findNearestNoteInKey } from "#lib/nearestNote.js";
@@ -798,8 +799,8 @@
 
   /**
    * 「ダウンロード」を押したときの関数
-   * 録音の中の音が AAC（iPhone・iPad）なら、そのままダウンロードする。
-   * Opus など（Android）なら、ほかのアプリでも聴けるように WAV に変換してからダウンロードする。
+   * どの端末の録音も WAV に変換し、グラフの左端（弾き始めの少し前）から書き出してダウンロードする。
+   * （WAV は、Audipo などほかのアプリでも聴ける。グラフの左端より前の、弾き始めるまでの待ち時間は入れない）
    */
   async function download() {
     // 録音のデータがないとき・変換している途中のときは、何もしない
@@ -807,21 +808,16 @@
       return;
     }
 
-    // ボタンを押したあとに別の録音に変わっても大丈夫なように、今のデータとファイル名を覚えておく
+    // ボタンを押したあとに別の録音に変わっても大丈夫なように、今のデータ・ファイル名・書き出し始める秒数を覚えておく
+    // audioOffset は、グラフの左端が録音の何秒目か（「▶ 再生」もここから始めている）
     const blob = recordedBlob;
     const name = fileName;
+    const startSeconds = audioOffset;
 
-    // ----- そのままでよいとき -----
-    if (!(await needsWavConversion(blob))) {
-      saveFile(audioUrl, name);
-      return;
-    }
-
-    // ----- WAV に変換するとき -----
     converting = true;
     errorMessage = "";
     try {
-      const wavBlob = await convertToWav(blob);
+      const wavBlob = await convertToWav(blob, startSeconds);
       const wavUrl = URL.createObjectURL(wavBlob);
       // 拡張子を .wav に付け替える（例：viola-neiro-20261110-1413.m4a → viola-neiro-20261110-1413.wav）
       saveFile(wavUrl, name.replace(/\.[^.]+$/, "") + ".wav");
@@ -1174,7 +1170,7 @@
     </button>
     <!-- ダウンロードは、アプリで録音したときだけ（読み込んだ音源は、もともと手元にあるファイルなので出さない） -->
     {#if !importedName}
-      <!-- Android の録音は、ほかのアプリでも聴けるように WAV に変換してからダウンロードする（変換中はボタンを押せない） -->
+      <!-- 録音は WAV に変換し、グラフの左端から書き出してダウンロードする（変換中はボタンを押せない） -->
       <button type="button" class="sub-button" onclick={download} disabled={converting}>
         {converting ? "変換中…" : "ダウンロード"}
       </button>

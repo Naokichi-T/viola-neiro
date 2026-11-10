@@ -5,13 +5,17 @@
 //   Android の Chrome・Brave で録音すると、拡張子は .m4a でも、中の音は Opus という形式になる。
 //   ブラウザ（アプリの「▶ 再生」）では聴けるが、Audipo などほかのアプリの多くは、
 //   「.m4a の中の Opus」を再生できず、ダウンロードしたファイルが聞こえなかった。
-//   WAV は、ほぼどのアプリ・端末でも再生できるので、Opus などのときは WAV にしてからダウンロードする。
-//   （iPhone・iPad の録音は、中の音が AAC（どこでも再生できる形式）なので、そのまま使う）
+//   WAV は、ほぼどのアプリ・端末でも再生できる。
 //
-// 流れ：
-//   ① 録音のデータの先頭を見て、中の音が AAC かどうかを調べる（needsWavConversion）
-//   ② AAC でなければ、ブラウザの機能（decodeAudioData）で波形に戻し、
-//      1本（モノラル）にして、16ビットの WAV ファイルの形に書き出す（convertToWav）
+// 【2026/11/10 どの端末の録音も WAV にして、弾き始めの少し前から書き出すようにした】
+//   録音のファイルには、「録音」を押してから弾き始めるまでの待ち時間も入っている。
+//   グラフと「▶ 再生」は弾き始めの少し前からなので、ダウンロードのファイルもそこからにそろえる。
+//   .m4a のままでは前を切れないので、iPhone・iPad の録音（AAC）も WAV にする。
+//
+// 流れ（convertToWav）：
+//   ① ブラウザの機能（decodeAudioData）で、録音を波形に戻す
+//   ② 1本（モノラル）にして、決めた秒数より前を切り捨てる
+//   ③ 16ビットの WAV ファイルの形に書き出す
 
 // ===== 設定値 =====
 
@@ -19,61 +23,14 @@
 // 48000 のままより少し容量が小さく、聴いた感じは変わらない
 const WAV_SAMPLE_RATE = 44100;
 
-// 中の音の形式を調べるために読む、録音のデータの先頭の長さ（バイト）
-// 形式の名前（'mp4a' や 'Opus'）は、ファイルの最初のほう（送ってもらった録音では530バイト目）に書かれている
-const HEADER_BYTES = 4096;
-
-// .m4a の中で、音の形式の名前が書かれている欄の印（この印のすぐ後ろに 'mp4a' や 'Opus' が書かれる）
-const CODEC_BOX_NAME = "stsd";
-
-// 欄の印から、形式の名前を探す範囲（バイト）。送ってもらった録音では、印の16バイト後ろに 'Opus' があった
-const CODEC_SEARCH_BYTES = 64;
-
-/**
- * 録音のデータを、WAV にしてからダウンロードしたほうがよいかを調べる関数
- * .m4a の「形式の名前の欄（stsd）」に「mp4a」（AAC の印）があれば、どこでも再生できるので、そのままでよい。
- * それ以外（Opus の .m4a や .webm）は WAV にする。
- * @param {Blob} blob - 録音のデータ
- * @returns {Promise<boolean>} WAV にしたほうがよいなら true
- */
-export async function needsWavConversion(blob) {
-  // まず先頭だけを読んで調べる（ふつうは、形式の名前の欄はファイルの最初のほうにある）
-  let text = await readAsText(blob.slice(0, HEADER_BYTES));
-  let boxIndex = text.indexOf(CODEC_BOX_NAME);
-
-  // 先頭に見つからなければ、ファイル全体を読んで探す（形式の名前の欄が、ファイルの最後に置かれる作り方もあるため）
-  if (boxIndex === -1) {
-    text = await readAsText(blob);
-    boxIndex = text.indexOf(CODEC_BOX_NAME);
-  }
-
-  // 形式の名前の欄がない（.webm など）ときは、WAV にする
-  if (boxIndex === -1) {
-    return true;
-  }
-
-  // 欄のすぐ後ろに AAC の印があれば変換しない、なければ（Opus など）変換する
-  return !text.slice(boxIndex, boxIndex + CODEC_SEARCH_BYTES).includes("mp4a");
-}
-
-/**
- * データを、1バイトを1文字として読む関数（形式の名前などの印を探すために使う）
- * 文字として読めない部分は記号になるが、アルファベットの印を探すだけなので問題ない。
- * @param {Blob} blob - 読むデータ
- * @returns {Promise<string>} 1バイトを1文字にした文字列
- */
-async function readAsText(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  return new TextDecoder("latin1").decode(bytes);
-}
-
 /**
  * 録音のデータを、WAV ファイルのデータに変換する関数
  * @param {Blob} blob - 録音のデータ（.m4a や .webm）
+ * @param {number} startSeconds - 録音の何秒目から書き出すか（それより前は切り捨てる）。0 なら最初から
  * @returns {Promise<Blob>} WAV ファイルのデータ（モノラル・16ビット・44100Hz）
  * @throws 波形に戻せなかったときは、日本語のメッセージのエラーになる
  */
-export async function convertToWav(blob) {
+export async function convertToWav(blob, startSeconds) {
   // 録音のデータを、バイトの並びとして読み込む
   const arrayBuffer = await blob.arrayBuffer();
 
@@ -89,8 +46,14 @@ export async function convertToWav(blob) {
     throw new Error("録音を WAV に変換できませんでした。");
   }
 
-  // 波形を1本（モノラル）にして、WAV の形に書き出す
-  return encodeWav(mixToMono(buffer), buffer.sampleRate);
+  // 波形を1本（モノラル）にする
+  const mono = mixToMono(buffer);
+
+  // 書き出し始める位置（何個目のデータか）。録音の長さを超えないように、0〜長さ の範囲に収める
+  const startIndex = Math.min(Math.max(Math.round(startSeconds * buffer.sampleRate), 0), mono.length);
+
+  // 始める位置より前を切り捨てて（subarray はコピーせずに一部分を取り出す）、WAV の形に書き出す
+  return encodeWav(mono.subarray(startIndex), buffer.sampleRate);
 }
 
 /**
