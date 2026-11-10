@@ -20,7 +20,9 @@ const ACCENT_CLICK_FREQUENCY = 1500;
 const CLICK_DURATION = 0.05;
 
 // 音量のつまみを一番大きくしたときの、クリックの音量（0〜1）
-const MAX_CLICK_VOLUME = 0.4;
+// 【2026/11/10 0.4 → 1.0 に変更】スマホのスピーカーでは小さかったので、上限（1）まで上げた。
+// クリックは正弦波（波の一番高い所が音量と同じ）で、同時に鳴る音もないので、1.0 でも音は割れない
+const MAX_CLICK_VOLUME = 1.0;
 
 // 何ミリ秒ごとに、次のクリックを予約するか
 const CHECK_INTERVAL_MILLISECONDS = 25;

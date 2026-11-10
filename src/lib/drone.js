@@ -3,14 +3,22 @@
 //
 // 音の流れ（1つの音につき）：
 //   発振器（のこぎり波） → ローパスフィルター（高い倍音を削ってやわらかくする） → 音ごとの音量
-//     → 全体の音量（フェードと音量のつまみ用） → スピーカー
+//     → 全体の音量（フェードと音量のつまみ用） → 音割れ防止の部品（リミッター） → スピーカー
+//
+// 【2026/11/10 音を大きくした】
+//   スマホのスピーカーでは、お手本やドローンの音が小さかった。
+//   以前は、音が割れないように、つまみを最大にしても上限の3〜5割（波の一番高い所が 0.3〜0.5）に抑えていた。
+//   そこで、全体の音量の上限を上げ、上限を超えそうな所だけをリミッターで抑えるようにした（つまみ最大で上限ぎりぎり）。
+//   あわせて、低い音（ド3 など）でも聞こえやすいように、残す倍音を増やした（FILTER_RATIO）。
 //
 // 「主音＋5度」のときは、この「1つの音」を2つ作って、全体の音量にまとめる。
 
 // ===== 設定値 =====
 
-// 音量のつまみを一番大きくしたときの、全体の音量（0〜1）。大きすぎると音が割れるので控えめにする
-const MAX_GAIN = 0.5;
+// 音量のつまみを一番大きくしたときの、全体の音量
+// 【2026/11/10 0.5 → 1.6 に変更】主音1つ（音ごとの音量 0.6）のとき、波の一番高い所が上限（1）近くになる大きさ。
+// 主音＋5度のときや、フィルターで波の形が変わって上限を超えそうなときは、リミッターが抑えるので音は割れない
+const MAX_GAIN = 1.6;
 
 // 鳴らし始め・止めるときに、音量を変えていく時間（秒）。急に鳴る・切れるとプツッと音がするのを防ぐ
 const FADE_SECONDS = 0.3;
@@ -24,15 +32,30 @@ const VOICE_GAINS = [0.6, 0.4];
 
 // ローパスフィルターで、どのくらい上の倍音まで残すか（音の周波数の何倍か）
 // 倍音を残すと、スマホのスピーカーでも低い音が聞こえやすくなる
-const FILTER_RATIO = 8;
+// 【2026/11/10 8 → 16 に変更】スマホのスピーカーは、ド3（約131Hz）のような低い音そのものはほとんど鳴らせない。
+// 倍音を多く残すと、耳はその並びから元の高さ（ド3）を感じ取れるので、低い音でも大きく聞こえる（音は少し明るく硬めになる）
+const FILTER_RATIO = 16;
 
 // ローパスフィルターの上限（Hz）。高い音のときに、キンキンしないようにする
 const MAX_FILTER_FREQUENCY = 4000;
+
+// ----- 音割れ防止の部品（リミッター）の設定 -----
+// 音がこの大きさ（dB。0 が上限）を超えたら抑え始める
+const LIMITER_THRESHOLD = -3;
+// 超えた分をどのくらい抑えるか（20 なら、20dB 超えても 1dB しか大きくならない＝ほぼ頭打ち）
+const LIMITER_RATIO = 20;
+// 抑え始めるまでの時間（秒）。短いほど、急に大きくなった所もすぐ抑えられる
+const LIMITER_ATTACK = 0.003;
+// 抑えるのをやめるまでの時間（秒）
+const LIMITER_RELEASE = 0.25;
 
 // ===== 鳴らしている状態 =====
 
 // 音を作るための土台（最初に鳴らすときに1回だけ作る）
 let audioContext = null;
+
+// 音割れ防止の部品（リミッター）。土台と一緒に1回だけ作り、すべての音をここを通してスピーカーに出す
+let limiter = null;
 
 // 今鳴らしている「ひとまとまり」の音
 //   gain   ：全体の音量の部品
@@ -50,6 +73,16 @@ async function ensureAudioContext() {
   // まだ作っていなければ作る
   if (audioContext === null) {
     audioContext = new AudioContext();
+
+    // 音割れ防止の部品（リミッター）を作り、スピーカーにつないでおく
+    // DynamicsCompressor は、大きすぎる音だけを小さくする部品。設定を強めにして、上限を超えないようにする
+    limiter = audioContext.createDynamicsCompressor();
+    limiter.threshold.value = LIMITER_THRESHOLD;
+    limiter.knee.value = 0; // 境目をなめらかにしない（決めた大きさから、すぐ抑える）
+    limiter.ratio.value = LIMITER_RATIO;
+    limiter.attack.value = LIMITER_ATTACK;
+    limiter.release.value = LIMITER_RELEASE;
+    limiter.connect(audioContext.destination);
   }
 
   // 一時停止状態になっていることがあるので、動かしておく
@@ -167,7 +200,8 @@ export async function startDrone(frequencies, volume) {
   const gain = audioContext.createGain();
   gain.gain.setValueAtTime(0, now);
   gain.gain.linearRampToValueAtTime(volumeToGain(volume), now + FADE_SECONDS);
-  gain.connect(audioContext.destination);
+  // スピーカーに直接ではなく、音割れ防止の部品（リミッター）を通して出す
+  gain.connect(limiter);
 
   // 1つ1つの音を作る
   const voices = frequencies.map((frequency, index) => createVoice(frequency, index, gain));
@@ -240,7 +274,7 @@ export function stopDrone() {
     voice.oscillator.stop(now + FADE_SECONDS + 0.05);
   });
 
-  // 少し待ってから、全体の音量の部品をスピーカーから外して片付ける
+  // 少し待ってから、全体の音量の部品をリミッターから外して片付ける
   setTimeout(
     () => {
       stopping.gain.disconnect();
