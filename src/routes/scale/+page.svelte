@@ -10,6 +10,8 @@
   //      （スピーカーから出たお手本の音を、自分が弾いた音と間違えないため）
   //     ↓
   //   ② マイクで聴く（status = 'listening'）
+  //      直近0.2秒の高さの中央値（真ん中の値）でならしてから判定する（チューナーと同じならし方）
+  //      （C線を弓で弾くと、ときどき1オクターブ上と測り間違えるので、1回だけの間違いで判定が崩れないようにするため）
   //      ・±10セント以内が0.5秒続いた → 合格。次の音へ進んで ① に戻る
   //      ・±10セントの外が0.7秒続いた → 外れ。その音の「外した回数」を1増やして ① に戻る（同じ音をもう一度鳴らす）
   //     ↓ 最後の音で合格したら
@@ -33,6 +35,9 @@
 
   // マイクのオン・オフ
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
+
+  // いくつかの数の中央値（真ん中の値）を求める関数（チューナーと同じものを使う）
+  import { getMedian } from "#lib/longtone.js";
 
   // 画面が暗くならないようにする関数
   import { keepScreenOn, allowScreenOff } from "#lib/wakeLock.js";
@@ -63,6 +68,10 @@
 
   // ずれの針の目盛りの端（セント）。はみ出したら端に貼り付ける
   const METER_CENTS = 50;
+
+  // 判定の前に高さをならすために使う、直近の高さの長さ（秒）。チューナーと同じ値
+  // （C線を弓で弾いたとき、ときどき混ざる「1オクターブ上」の測り間違いを、中央値で消すため）
+  const SMOOTH_SECONDS = 0.2;
 
   // ===== 画面で選ぶ値 =====
 
@@ -120,6 +129,9 @@
 
   // お手本の音を止める・判定を始めるための予約（止めるときに取り消すために持っておく）
   let toneTimer = null;
+
+  // 直近の高さ（time は秒、frequency は周波数）。中央値でならすのに使う
+  let recent = [];
 
   // ===== 選んだ値から計算する値 =====
 
@@ -256,6 +268,8 @@
     currentCents = null;
     okSince = null;
     missSince = null;
+    // 前の音の高さが、次の判定に混ざらないように捨てる
+    recent = [];
 
     // お手本の音を鳴らす（ドローンと同じ音色で、1つの音だけ）
     startDrone([targetFrequency], volume);
@@ -277,7 +291,7 @@
 
   /**
    * マイクで音程を調べるたびに呼ばれる関数（1秒に約60回）
-   * 判定しているときだけ、合っているか・外れているかを調べる。
+   * 判定しているときだけ、直近0.2秒の中央値でならした高さで、合っているか・外れているかを調べる。
    * @param {number|null} frequency - 周波数（音が小さい・はっきりしないときは null）
    * @param {number} now - 今の時刻（秒）
    */
@@ -288,15 +302,25 @@
     }
 
     // 音が聞こえないとき：続いていた「合っている」「外れている」を、どちらも数え直しにする
+    // ためた高さも捨てる（弾き直したときに、前の音が混ざらないように）
     if (frequency === null) {
       currentCents = null;
       okSince = null;
       missSince = null;
+      recent = [];
       return;
     }
 
+    // 直近の高さに加え、古くなったもの（SMOOTH_SECONDS より前）を捨てる
+    recent.push({ time: now, frequency: frequency });
+    recent = recent.filter((item) => now - item.time <= SMOOTH_SECONDS);
+
+    // ためた高さの中央値を、判定に使う高さにする
+    // （ときどき混ざる1オクターブ上の値は、少数派なので中央値には出てこない）
+    const smoothedFrequency = getMedian(recent.map((item) => item.frequency));
+
     // 目標からのずれ（セント）
-    const cents = getScaleCents(frequency, targetFrequency);
+    const cents = getScaleCents(smoothedFrequency, targetFrequency);
     currentCents = cents;
 
     if (Math.abs(cents) <= OK_CENTS) {
@@ -384,6 +408,7 @@
     currentCents = null;
     okSince = null;
     missSince = null;
+    recent = [];
   }
 
   /**
